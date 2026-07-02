@@ -1,0 +1,31 @@
+version: 2
+
+project_name: pm
+
+builds:
+  - main: ./cmd/pm
+    binary: pm
+    env:
+      - CGO_ENABLED=0
+    # syscall.Exec is unix-only; windows is not a supported target.
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^ci"

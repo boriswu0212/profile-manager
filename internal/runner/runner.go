@@ -1,0 +1,243 @@
+package runner
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/boriswu0212/profile-manager/internal/config"
+)
+
+// anthropicBaseURL normalises a user-supplied base URL for ANTHROPIC_BASE_URL,
+// which must not contain the "/v1" segment — Claude Code's Anthropic SDK
+// appends "/v1/messages" itself. OpenAI-convention URLs keep "/v1" in the
+// profile (codex needs it); strip it here for claude only.
+//
+//	"https://api.anthropic.com"                     → "https://api.anthropic.com"
+//	"https://proxy.example.com/prod/aiendpoint/v1/" → "https://proxy.example.com/prod/aiendpoint"
+func anthropicBaseURL(raw string) string {
+	return strings.TrimSuffix(strings.TrimRight(raw, "/"), "/v1")
+}
+
+func claudeSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+func selfPath() string {
+	p, err := os.Executable()
+	if err != nil {
+		return "pm"
+	}
+	return p
+}
+
+func claudePath() (string, error) {
+	return exec.LookPath("claude")
+}
+
+type settingsBackup struct {
+	path            string
+	hadHelper       bool
+	originalHelper  string
+	originalContent map[string]any
+}
+
+func backupSettings(path string) (*settingsBackup, error) {
+	backup := &settingsBackup{path: path}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			backup.originalContent = make(map[string]any)
+			return backup, nil
+		}
+		return nil, fmt.Errorf("read settings: %w", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("parse settings: %w", err)
+	}
+
+	backup.originalContent = settings
+	if helper, ok := settings["apiKeyHelper"]; ok {
+		backup.hadHelper = true
+		backup.originalHelper = fmt.Sprintf("%v", helper)
+	}
+
+	return backup, nil
+}
+
+func (b *settingsBackup) restore() error {
+	if b.hadHelper {
+		b.originalContent["apiKeyHelper"] = b.originalHelper
+	} else {
+		delete(b.originalContent, "apiKeyHelper")
+	}
+	return writeSettings(b.path, b.originalContent)
+}
+
+func writeSettings(path string, settings map[string]any) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create settings dir: %w", err)
+	}
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+func Run(profile *config.Profile, model string, extraArgs []string) error {
+	applyModelAndRecord(profile, model)
+
+	if profile.EffectiveTool() == config.ToolCodex {
+		return RunCodex(profile, model, extraArgs)
+	}
+
+	cp, err := claudePath()
+	if err != nil {
+		return fmt.Errorf("claude not found in PATH: %w", err)
+	}
+
+	switch profile.Provider {
+	case config.ProviderAnthropic, config.ProviderOpenAI:
+		return runWithAPIKeyHelper(cp, profile, extraArgs)
+	case config.ProviderBedrock:
+		return runBedrock(cp, profile, extraArgs)
+	case config.ProviderSubscription:
+		return runSubscription(cp, profile, extraArgs)
+	default:
+		return fmt.Errorf("unknown provider: %s", profile.Provider)
+	}
+}
+
+// applyModelAndRecord resolves which model this launch uses — explicit -m
+// flag > model last used in the current directory > the profile's default —
+// and records the launch (recent list + per-directory last model).
+func applyModelAndRecord(profile *config.Profile, model string) {
+	if model != "" {
+		profile.Model = model
+	}
+
+	cwd, _ := os.Getwd()
+	cfgPath := config.DefaultPath()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return
+	}
+
+	if model == "" && cwd != "" {
+		if last := cfg.LastModel(cwd, profile.Name); last != "" {
+			profile.Model = last
+		}
+	}
+
+	cfg.RecordUsage(profile.Name, profile.Model)
+	cfg.RecordLastModel(cwd, profile.Name, profile.Model)
+	_ = cfg.Save(cfgPath)
+}
+
+func setupSignalHandler(cleanup func()) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cleanup()
+		os.Exit(130)
+	}()
+}
+
+func runWithAPIKeyHelper(cp string, profile *config.Profile, args []string) error {
+	settingsPath := claudeSettingsPath()
+
+	backup, err := backupSettings(settingsPath)
+	if err != nil {
+		return err
+	}
+
+	delete(backup.originalContent, "apiKeyHelper")
+	if err := writeSettings(settingsPath, backup.originalContent); err != nil {
+		return fmt.Errorf("clean apiKeyHelper: %w", err)
+	}
+
+	// Fail early if the key cannot be resolved. The key itself is delivered
+	// via a per-invocation apiKeyHelper (--settings flag) instead of
+	// ANTHROPIC_API_KEY: an env key alongside a claude.ai login makes Claude
+	// Code print "Both claude.ai and ANTHROPIC_API_KEY set" on every start,
+	// while the apiKeyHelper source is exempt from that auth-conflict warning.
+	if _, err := config.ResolveAPIKey(profile); err != nil {
+		return fmt.Errorf("resolve API key: %w", err)
+	}
+
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
+
+	if profile.BaseURL != "" {
+		os.Setenv("ANTHROPIC_BASE_URL", anthropicBaseURL(profile.BaseURL))
+	}
+
+	flagSettings, err := json.Marshal(map[string]any{
+		"apiKeyHelper": fmt.Sprintf("%q _resolve-key %q", selfPath(), profile.Name),
+		// claude.ai connectors cannot work through a non-claude.ai gateway;
+		// disabling them explicitly also silences the startup notice about it.
+		"disableClaudeAiConnectors": true,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal flag settings: %w", err)
+	}
+
+	argv := append([]string{"claude", "--settings", string(flagSettings)}, args...)
+	if profile.Model != "" {
+		argv = append(argv, "--model", profile.Model)
+	}
+	return syscall.Exec(cp, argv, os.Environ())
+}
+
+func runBedrock(cp string, profile *config.Profile, args []string) error {
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
+	os.Unsetenv("ANTHROPIC_BASE_URL")
+
+	os.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+	if profile.Region != "" {
+		os.Setenv("AWS_REGION", profile.Region)
+	}
+	if profile.AWSProfile != "" {
+		os.Setenv("AWS_PROFILE", profile.AWSProfile)
+	}
+	argv := append([]string{"claude"}, args...)
+	if profile.Model != "" {
+		argv = append(argv, "--model", profile.Model)
+	}
+	return syscall.Exec(cp, argv, os.Environ())
+}
+
+func runSubscription(cp string, profile *config.Profile, args []string) error {
+	settingsPath := claudeSettingsPath()
+
+	backup, err := backupSettings(settingsPath)
+	if err == nil {
+		delete(backup.originalContent, "apiKeyHelper")
+		_ = writeSettings(settingsPath, backup.originalContent)
+	}
+
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("ANTHROPIC_BASE_URL")
+	os.Unsetenv("CLAUDE_CODE_USE_BEDROCK")
+	os.Unsetenv("CLAUDE_CODE_USE_VERTEX")
+
+	argv := append([]string{"claude"}, args...)
+	if profile.Model != "" {
+		argv = append(argv, "--model", profile.Model)
+	}
+	return syscall.Exec(cp, argv, os.Environ())
+}
