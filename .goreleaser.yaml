@@ -7,10 +7,10 @@ builds:
     binary: pm
     env:
       - CGO_ENABLED=0
-    # syscall.Exec is unix-only; windows is not a supported target.
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
@@ -19,6 +19,9 @@ builds:
 
 archives:
   - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt

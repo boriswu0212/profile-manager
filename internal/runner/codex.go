@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 
 	"github.com/boriswu0212/profile-manager/internal/config"
 )
@@ -98,7 +97,7 @@ func RunCodex(profile *config.Profile, model string, codexArgs []string) error {
 	}
 	argv = append(argv, codexArgs...)
 
-	return syscall.Exec(cp, argv, os.Environ())
+	return execProcess(cp, argv)
 }
 
 func buildCodexTOML(providerID string, profile *config.Profile, envKeyName string) string {

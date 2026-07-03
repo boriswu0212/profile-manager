@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
-	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -213,14 +212,3 @@ func normalizeToken(raw string) string {
 	return b.String()
 }
 
-// stdinReadable reports whether stdin has bytes available within d.
-func stdinReadable(d time.Duration) bool {
-	fds := []unix.PollFd{{Fd: int32(os.Stdin.Fd()), Events: unix.POLLIN}}
-	for {
-		n, err := unix.Poll(fds, int(d.Milliseconds()))
-		if err == unix.EINTR {
-			continue
-		}
-		return err == nil && n > 0
-	}
-}
