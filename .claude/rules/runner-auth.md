@@ -27,10 +27,14 @@ paths:
   restore logic placed after it will ever run. Any state that must be undone
   after claude exits cannot be undone here — design so nothing needs undoing
   (per-invocation flags over persistent settings writes). Windows has no
-  exec: `execProcess` emulates it by ignoring `os.Interrupt` (which also
-  cancels any pre-exec `signal.Notify` handler, matching how exec would wipe
-  it), waiting on a child process, and `os.Exit`-ing with its code — so the
-  same "nothing after it runs" rule holds on both platforms.
+  exec: `execProcess` emulates it with `signal.Reset(os.Interrupt)` (cancels
+  any pre-exec `signal.Notify` handler, matching how exec would wipe it)
+  plus `signal.Notify` to a channel nobody reads, then waits on the child
+  and `os.Exit`s with its code — the same "nothing after it runs" rule holds
+  on both platforms. The Notify is load-bearing: Go's runtime only reports a
+  console ctrl event as handled (keeping the process alive) for Notify'd
+  signals; `signal.Ignore` still gets the OS default terminate
+  (exit 0xc000013a).
 - **`CLAUDE_CODE_OAUTH_TOKEN` is the one credential pm deliberately exports —
   subscription profiles only.** It is Claude Code's documented subscription
   auth (below `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`/`apiKeyHelper` in

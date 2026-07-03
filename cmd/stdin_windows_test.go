@@ -44,11 +44,15 @@ func TestStdinReadableConsole(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if strings.HasPrefix(s, "SKIP:") {
+		// fmt so the skip is visible in CI logs without -v.
+		fmt.Printf("SKIP TestStdinReadableConsole: %s\n", s)
 		t.Skip(s)
 	}
 	if err != nil || !strings.Contains(s, "OK") {
 		t.Fatalf("console helper: %v\n%s", err, s)
 	}
+	// fmt so "ran, not skipped" is visible in CI logs without -v.
+	fmt.Println("CONSOLE VERDICT: TestStdinReadableConsole ran against a real console")
 }
 
 func helperConsoleInput() {

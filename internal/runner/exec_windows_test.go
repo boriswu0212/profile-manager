@@ -59,9 +59,10 @@ func helperSignalParent() {
 }
 
 // helperSignalChild stands in for a claude/codex TUI that handles Ctrl
-// events itself and keeps running.
+// events itself and keeps running. Notify, not Ignore: on Windows only a
+// Notify registration makes the runtime report the event as handled.
 func helperSignalChild() {
-	signal.Ignore(os.Interrupt)
+	signal.Notify(make(chan os.Signal, 1), os.Interrupt)
 	if err := os.WriteFile(os.Getenv("PM_TEST_READY"), []byte("up"), 0600); err != nil {
 		fmt.Fprintln(os.Stderr, "helper:", err)
 		os.Exit(3)
@@ -134,6 +135,8 @@ func TestExecProcessIgnoresCtrlBreak(t *testing.T) {
 	waitForFile(t, ready)
 	if err := windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(cmd.Process.Pid)); err != nil {
 		_ = cmd.Process.Kill()
+		// fmt so the skip is visible in CI logs without -v.
+		fmt.Printf("SKIP TestExecProcessIgnoresCtrlBreak: cannot send CTRL_BREAK (no console?): %v\n", err)
 		t.Skipf("cannot send CTRL_BREAK (no console?): %v", err)
 	}
 
@@ -192,18 +195,19 @@ func TestLaunchThroughClaudeExe(t *testing.T) {
 // as a red build.
 func TestLaunchThroughClaudeCmdShim(t *testing.T) {
 	args, _ := launchThroughStub(t, true)
-	t.Logf("args through claude.cmd shim: %q", args)
+	// fmt, not t.Logf: the verdict must reach CI logs without -v.
+	fmt.Printf("SHIM VERDICT: args through claude.cmd shim: %q\n", args)
 
 	settings, ok := argAfter(args, "--settings")
 	if !ok {
-		t.Log("NOTE: --settings flag did not survive the .cmd shim")
+		fmt.Println("SHIM VERDICT: --settings flag did NOT survive the .cmd shim")
 		return
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
-		t.Logf("NOTE: --settings JSON did NOT survive the .cmd shim: %v (got %q)", err, settings)
+		fmt.Printf("SHIM VERDICT: --settings JSON did NOT survive the .cmd shim: %v (got %q)\n", err, settings)
 	} else {
-		t.Log("--settings JSON survived the .cmd shim intact")
+		fmt.Println("SHIM VERDICT: --settings JSON survived the .cmd shim intact")
 	}
 }
 
