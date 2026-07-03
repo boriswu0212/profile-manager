@@ -19,4 +19,10 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+      # Non-verbose multi-package `go test` swallows all output of passing
+      # packages, hiding the windows-only verdicts (did the --settings JSON
+      # survive a claude.cmd shim? did the console tests run or skip?).
+      # Re-run just those tests verbosely so the answers land in the log.
+      - if: runner.os == 'Windows'
+        run: go test -v -run 'TestExecProcessIgnoresCtrlBreak|TestLaunchThrough|TestStdinReadableConsole' ./internal/runner ./cmd
       - run: go build -o pm${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/pm
