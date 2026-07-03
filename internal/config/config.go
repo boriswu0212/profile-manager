@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,6 +42,12 @@ type Profile struct {
 	Region     string `yaml:"region,omitempty"`
 	AWSProfile string `yaml:"aws_profile,omitempty"`
 	EnvKey     string `yaml:"env_key,omitempty"`
+	// Account and TokenBoundAt are set by `pm login` on subscription
+	// profiles: a user-declared label for which claude.ai account the token
+	// belongs to (setup-token tokens carry only user:inference scope, so the
+	// API refuses to reveal their identity) and the date the token was bound.
+	Account      string `yaml:"account,omitempty"`
+	TokenBoundAt string `yaml:"token_bound_at,omitempty"`
 }
 
 func (p *Profile) EffectiveTool() string {
@@ -210,7 +219,40 @@ func ResolveAPIKey(p *Profile) (string, error) {
 	if p.Provider == ProviderBedrock || p.Provider == ProviderSubscription {
 		return "", nil
 	}
+	return resolveCredential(p)
+}
 
+// ResolveOAuthToken resolves the Claude subscription OAuth token of a
+// subscription profile, sharing ResolveAPIKey's api_key/api_key_cmd
+// resolution chain. "" without error means no token is bound — the profile
+// uses the machine's ambient claude.ai login. Kept separate from
+// ResolveAPIKey so the hidden `pm _resolve-key` command can never print a
+// subscription token.
+func ResolveOAuthToken(p *Profile) (string, error) {
+	if p.APIKey == "" && p.APIKeyCmd == "" {
+		return "", nil
+	}
+	return resolveCredential(p)
+}
+
+// TokenFingerprint returns a short non-reversible identifier for a token —
+// enough to tell two tokens apart (login prints old → new on replacement,
+// launches show the live value) without revealing anything usable.
+func TokenFingerprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:4])
+}
+
+// DeleteOAuthToken removes the keychain entry `pm login` created for the
+// profile; a missing entry is not an error.
+func DeleteOAuthToken(profileName string) error {
+	if err := keyring.Delete("pm", profileName); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return fmt.Errorf("keychain delete %q: %w", profileName, err)
+	}
+	return nil
+}
+
+func resolveCredential(p *Profile) (string, error) {
 	if p.APIKey != "" {
 		if m := keychainRe.FindStringSubmatch(p.APIKey); m != nil {
 			key, err := keyring.Get("pm", m[1])

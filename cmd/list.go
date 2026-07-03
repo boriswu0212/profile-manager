@@ -10,8 +10,8 @@ import (
 
 func init() {
 	rootCmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List all profiles",
+		Use:     "list",
+		Short:   "List all profiles",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, _, err := loadConfig()
@@ -37,6 +37,9 @@ func init() {
 				}
 				if p.Provider == "subscription" {
 					endpoint = "(subscription)"
+					if p.Account != "" {
+						endpoint = "(subscription: " + p.Account + ")"
+					}
 				}
 				model := p.Model
 				if model == "" {

@@ -91,6 +91,7 @@ func RunCodex(profile *config.Profile, model string, codexArgs []string) error {
 	// signals go to codex and config.toml stays overwritten.
 	setupSignalHandler(func() { _ = backup.restore() })
 
+	announce(profile, fmt.Sprintf("%s API", profile.Provider))
 	argv := []string{"codex"}
 	if profile.Model != "" {
 		argv = append(argv, "--model", profile.Model)

@@ -146,6 +146,18 @@ func applyModelAndRecord(profile *config.Profile, model string) {
 	_ = cfg.Save(cfgPath)
 }
 
+// announce prints a one-line launch identity to stderr (it stays in the
+// terminal scrollback above the tool's own banner) and exports PM_PROFILE
+// into the launched process. Claude Code labels every token launch just
+// "CLAUDE_CODE_OAUTH_TOKEN", so with several token-bound accounts the
+// session itself never says which one it is — this line and
+// `!echo $PM_PROFILE` inside the session are the tell. Stderr, not stdout,
+// so piped headless runs (`pm run p -- -p ...`) stay clean.
+func announce(profile *config.Profile, auth string) {
+	os.Setenv("PM_PROFILE", profile.Name)
+	fmt.Fprintf(os.Stderr, "pm ▸ profile %q · %s · %s\n", profile.Name, profile.EffectiveTool(), auth)
+}
+
 func setupSignalHandler(cleanup func()) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -180,6 +192,7 @@ func runWithAPIKeyHelper(cp string, profile *config.Profile, args []string) erro
 
 	os.Unsetenv("ANTHROPIC_API_KEY")
 	os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
+	os.Unsetenv("CLAUDE_CODE_OAUTH_TOKEN")
 
 	if profile.BaseURL != "" {
 		os.Setenv("ANTHROPIC_BASE_URL", anthropicBaseURL(profile.BaseURL))
@@ -195,6 +208,7 @@ func runWithAPIKeyHelper(cp string, profile *config.Profile, args []string) erro
 		return fmt.Errorf("marshal flag settings: %w", err)
 	}
 
+	announce(profile, fmt.Sprintf("%s API", profile.Provider))
 	argv := append([]string{"claude", "--settings", string(flagSettings)}, args...)
 	if profile.Model != "" {
 		argv = append(argv, "--model", profile.Model)
@@ -206,6 +220,7 @@ func runBedrock(cp string, profile *config.Profile, args []string) error {
 	os.Unsetenv("ANTHROPIC_API_KEY")
 	os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
 	os.Unsetenv("ANTHROPIC_BASE_URL")
+	os.Unsetenv("CLAUDE_CODE_OAUTH_TOKEN")
 
 	os.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
 	if profile.Region != "" {
@@ -214,6 +229,11 @@ func runBedrock(cp string, profile *config.Profile, args []string) error {
 	if profile.AWSProfile != "" {
 		os.Setenv("AWS_PROFILE", profile.AWSProfile)
 	}
+	auth := "bedrock"
+	if profile.Region != "" {
+		auth += " " + profile.Region
+	}
+	announce(profile, auth)
 	argv := append([]string{"claude"}, args...)
 	if profile.Model != "" {
 		argv = append(argv, "--model", profile.Model)
@@ -231,9 +251,33 @@ func runSubscription(cp string, profile *config.Profile, args []string) error {
 	}
 
 	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
 	os.Unsetenv("ANTHROPIC_BASE_URL")
 	os.Unsetenv("CLAUDE_CODE_USE_BEDROCK")
 	os.Unsetenv("CLAUDE_CODE_USE_VERTEX")
+
+	// A profile-bound token (`pm login`) authenticates this launch as that
+	// subscription account. It sits below ANTHROPIC_AUTH_TOKEN/API_KEY and
+	// apiKeyHelper in Claude Code's credential precedence, which is why all
+	// of those are cleared above. Without a token the ambient claude.ai
+	// login is used, and a stray token from the shell must not override it.
+	token, err := config.ResolveOAuthToken(profile)
+	if err != nil {
+		return fmt.Errorf("resolve OAuth token for %q: %w", profile.Name, err)
+	}
+	if token != "" {
+		os.Setenv("CLAUDE_CODE_OAUTH_TOKEN", token)
+		// Fingerprint the token actually being exported (not stored
+		// metadata) so a re-login is visible as a changed fingerprint.
+		id := "token " + config.TokenFingerprint(token)
+		if profile.Account != "" {
+			id = profile.Account + " · " + id
+		}
+		announce(profile, "subscription ("+id+")")
+	} else {
+		os.Unsetenv("CLAUDE_CODE_OAUTH_TOKEN")
+		announce(profile, "subscription (shared claude.ai login)")
+	}
 
 	argv := append([]string{"claude"}, args...)
 	if profile.Model != "" {

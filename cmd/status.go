@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/boriswu0212/profile-manager/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +41,25 @@ func init() {
 
 			keyType := "none"
 			switch {
-			case profile.Provider == "subscription" || profile.Provider == "bedrock":
+			case profile.Provider == "subscription":
+				switch {
+				case strings.HasPrefix(profile.APIKey, "keychain://"):
+					keyType = "token: " + profile.APIKey
+					if tok, err := config.ResolveOAuthToken(profile); err == nil && tok != "" {
+						keyType = fmt.Sprintf("token %s (%s)", config.TokenFingerprint(tok), profile.APIKey)
+					}
+				case profile.APIKey != "" || profile.APIKeyCmd != "":
+					keyType = "token: (configured)"
+				default:
+					keyType = "(shared claude.ai login)"
+				}
+				if profile.Account != "" {
+					keyType += " · account: " + profile.Account
+				}
+				if profile.TokenBoundAt != "" {
+					keyType += " · bound " + profile.TokenBoundAt
+				}
+			case profile.Provider == "bedrock":
 				keyType = "(not applicable)"
 			case profile.APIKeyCmd != "":
 				keyType = "command: " + profile.APIKeyCmd

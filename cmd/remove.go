@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/boriswu0212/profile-manager/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +19,16 @@ func init() {
 				return err
 			}
 
+			// Best-effort cleanup of the keychain entry `pm login` created;
+			// never blocks removal, and never touches an entry another
+			// profile still references.
+			if p, lookupErr := cfg.GetProfile(args[0]); lookupErr == nil &&
+				p.Provider == config.ProviderSubscription &&
+				p.APIKey == "keychain://"+p.Name &&
+				!otherProfileReferences(cfg, p.Name, p.APIKey) {
+				_ = config.DeleteOAuthToken(p.Name)
+			}
+
 			if err := cfg.RemoveProfile(args[0]); err != nil {
 				return err
 			}
@@ -30,4 +41,15 @@ func init() {
 			return nil
 		},
 	})
+}
+
+// otherProfileReferences reports whether any profile other than name has
+// apiKey as its api_key — guards shared keychain:// entries from deletion.
+func otherProfileReferences(cfg *config.Config, name, apiKey string) bool {
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name != name && cfg.Profiles[i].APIKey == apiKey {
+			return true
+		}
+	}
+	return false
 }
