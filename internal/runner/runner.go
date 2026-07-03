@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/boriswu0212/profile-manager/internal/config"
 )
@@ -158,16 +156,6 @@ func announce(profile *config.Profile, auth string) {
 	fmt.Fprintf(os.Stderr, "pm ▸ profile %q · %s · %s\n", profile.Name, profile.EffectiveTool(), auth)
 }
 
-func setupSignalHandler(cleanup func()) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cleanup()
-		os.Exit(130)
-	}()
-}
-
 func runWithAPIKeyHelper(cp string, profile *config.Profile, args []string) error {
 	settingsPath := claudeSettingsPath()
 
@@ -213,7 +201,7 @@ func runWithAPIKeyHelper(cp string, profile *config.Profile, args []string) erro
 	if profile.Model != "" {
 		argv = append(argv, "--model", profile.Model)
 	}
-	return syscall.Exec(cp, argv, os.Environ())
+	return execProcess(cp, argv)
 }
 
 func runBedrock(cp string, profile *config.Profile, args []string) error {
@@ -238,7 +226,7 @@ func runBedrock(cp string, profile *config.Profile, args []string) error {
 	if profile.Model != "" {
 		argv = append(argv, "--model", profile.Model)
 	}
-	return syscall.Exec(cp, argv, os.Environ())
+	return execProcess(cp, argv)
 }
 
 func runSubscription(cp string, profile *config.Profile, args []string) error {
@@ -283,5 +271,5 @@ func runSubscription(cp string, profile *config.Profile, args []string) error {
 	if profile.Model != "" {
 		argv = append(argv, "--model", profile.Model)
 	}
-	return syscall.Exec(cp, argv, os.Environ())
+	return execProcess(cp, argv)
 }

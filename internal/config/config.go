@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -274,7 +273,7 @@ func resolveCredential(p *Profile) (string, error) {
 	}
 
 	if p.APIKeyCmd != "" {
-		out, err := exec.Command("sh", "-c", p.APIKeyCmd).Output()
+		out, err := shellCommand(p.APIKeyCmd).Output()
 		if err != nil {
 			return "", fmt.Errorf("api_key_cmd failed: %w", err)
 		}
@@ -284,14 +283,3 @@ func resolveCredential(p *Profile) (string, error) {
 	return "", fmt.Errorf("no api_key or api_key_cmd configured for profile %q", p.Name)
 }
 
-func CheckConfigPermissions(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil
-	}
-	perm := info.Mode().Perm()
-	if perm&0077 != 0 {
-		return fmt.Errorf("config file %s has permissions %o (should be 0600). Fix with: chmod 600 %s", path, perm, path)
-	}
-	return nil
-}

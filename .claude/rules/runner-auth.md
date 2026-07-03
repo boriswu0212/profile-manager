@@ -26,7 +26,11 @@ paths:
 - **`syscall.Exec` replaces the process.** No defer, signal handler, or
   restore logic placed after it will ever run. Any state that must be undone
   after claude exits cannot be undone here — design so nothing needs undoing
-  (per-invocation flags over persistent settings writes).
+  (per-invocation flags over persistent settings writes). Windows has no
+  exec: `execProcess` emulates it by ignoring `os.Interrupt` (which also
+  cancels any pre-exec `signal.Notify` handler, matching how exec would wipe
+  it), waiting on a child process, and `os.Exit`-ing with its code — so the
+  same "nothing after it runs" rule holds on both platforms.
 - **`CLAUDE_CODE_OAUTH_TOKEN` is the one credential pm deliberately exports —
   subscription profiles only.** It is Claude Code's documented subscription
   auth (below `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`/`apiKeyHelper` in
