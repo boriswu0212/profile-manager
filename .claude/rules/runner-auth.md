@@ -27,3 +27,24 @@ paths:
   restore logic placed after it will ever run. Any state that must be undone
   after claude exits cannot be undone here — design so nothing needs undoing
   (per-invocation flags over persistent settings writes).
+- **`CLAUDE_CODE_OAUTH_TOKEN` is the one credential pm deliberately exports —
+  subscription profiles only.** It is Claude Code's documented subscription
+  auth (below `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`/`apiKeyHelper` in
+  credential precedence, which is why `runSubscription` clears all of those
+  and strips stale `apiKeyHelper` from settings). Resolve it with
+  `config.ResolveOAuthToken`, never `ResolveAPIKey` — the latter must keep
+  returning nothing for subscription profiles so the hidden `pm _resolve-key`
+  can never print an OAuth token. Every non-subscription path (and a
+  subscription profile with no token bound) must actively `Unsetenv` it so a
+  token exported in the shell can't hijack a launch. Upstream caveats:
+  claude-code #37512 reported (v2.1.81, closed not-planned) that launching
+  with this env var can delete the shared `Claude Code-credentials` Keychain
+  login on exit — not reproduced on 2.1.199 (entry survived interactive and
+  `claude auth status` runs); re-verify on claude upgrades. Headless `-p`
+  runs don't refresh the token's embedded access token (#28827), so long
+  headless sessions can 401 while interactive ones are fine. Cosmetic:
+  token-authed sessions show a "Claude API" launch banner and
+  `authMethod: oauth_token` in `claude auth status` instead of the
+  subscription name — usage still bills the subscription; only
+  `ANTHROPIC_API_KEY` (which the runner clears) would cause pay-per-token
+  billing.

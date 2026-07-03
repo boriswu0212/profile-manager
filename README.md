@@ -7,6 +7,7 @@ Launch profile manager for [Claude Code](https://claude.com/claude-code) and [Co
 - **Interactive TUI** — bare `pm` opens a two-pane picker (profiles / models) with search and per-profile recent models
 - **Secure key storage** — OS keychain, environment variable, shell command, or literal
 - **Clean auth handoff** — the API key is delivered via a per-invocation `apiKeyHelper`, so your claude.ai login is untouched and Claude Code prints no auth-conflict warnings
+- **Multiple subscription accounts** — `pm login <profile>` binds a claude.ai account to a profile via a long-lived OAuth token, so work and personal subscriptions can coexist on one machine
 - **Per-directory model memory** — `pm` remembers which model you last used for each profile in each directory
 
 ## Install
@@ -55,7 +56,9 @@ pm run work -m claude-opus-4-8 -- --continue
 | `pm run [profile] [-m model] [-- args...]` | Launch `claude`/`codex` with a profile; extra args go to the tool |
 | `pm status` | Show the active profile and recent usage |
 | `pm models [profile]` | List models available from the profile's endpoint |
-| `pm remove <profile>` (`rm`) | Remove a profile |
+| `pm login <profile> [--paste] [--account label]` | Bind a claude.ai subscription account to a profile (creates it if needed) |
+| `pm logout <profile>` | Remove a profile's stored subscription token |
+| `pm remove <profile>` (`rm`) | Remove a profile (and its `pm login` keychain entry, if any) |
 
 All commands accept `--config <path>` to use a config file other than `~/.pm.yaml`. `pm --version` prints the build version.
 
@@ -128,7 +131,30 @@ The same file also stores usage state maintained by `pm`: `recent` (last 10 prof
 
 When `api_key` is empty, `api_key_cmd` is run via `sh -c` and its trimmed stdout becomes the key.
 
-`bedrock` and `subscription` profiles need no key (AWS credentials and the claude.ai login are used instead).
+`bedrock` profiles need no key (AWS credentials are used). `subscription` profiles need none either — but can optionally hold an OAuth token bound by `pm login` (stored as `keychain://<profile>` in `api_key`), which pins the launch to a specific claude.ai account.
+
+## Multiple subscription accounts
+
+Claude Code itself keeps exactly one claude.ai login per machine (a single Keychain slot — logging into a second account overwrites the first). `pm` works around this with per-profile OAuth tokens:
+
+```sh
+pm login work        # browser signed into the work claude.ai account
+pm login personal    # switch the browser to the personal account first
+pm run work          # launches claude as the work account
+pm run personal      # launches claude as the personal account
+```
+
+`pm login` runs `claude setup-token` (a browser OAuth flow that prints a 1-year token), stores the token in the OS keychain under `pm`'s own namespace, and injects it as `CLAUDE_CODE_OAUTH_TOKEN` at launch. Which account a login binds to is decided by whichever claude.ai account is active in your browser during the flow — use a second browser profile or a private window for the second account.
+
+Notes:
+
+- Requires a Pro, Max, Team, or Enterprise plan (`claude setup-token` rejects free accounts).
+- Running `setup-token` again for the same account invalidates that account's previous token. To reuse a token minted elsewhere (e.g. on another machine), store it with `pm login <profile> --paste`.
+- A subscription profile without a token keeps the old behavior: it uses the machine's shared claude.ai login.
+- Rate limits are per account, not per profile.
+- Token-authed sessions show a "Claude API" launch banner (and `claude auth status` reports `authMethod: oauth_token`) instead of the plan name. This is cosmetic — an `sk-ant-oat…` token always bills the subscription it belongs to, never pay-per-token API. Verify with `/usage` inside the session: plan-style rate-limit windows mean subscription billing.
+- Claude Code's UI can't tell you *which* token a session runs on (setup-tokens carry only `user:inference` scope, so even the API refuses to identify them). pm compensates at launch: every run prints `pm ▸ profile "personal" · claude · subscription (you@example.com · token ab12cd34)` above the banner and exports `PM_PROFILE` for in-session checks (`!echo $PM_PROFILE`). The account label is what you declare at `pm login` (prompted, or `--account you@example.com`); the fingerprint is a live sha256 prefix of the token actually being used.
+- Re-running `pm login` on a profile tells you exactly what happened to the token: `Token 5bf470b9 stored — replaces ccf4495b` (or `unchanged, same token as before`). `pm status` and `pm list` show the fingerprint, account label, and bind date.
 
 ## Model selection
 
@@ -146,7 +172,7 @@ Every launch records its model per (directory, profile) in `~/.pm.yaml`, and tha
 
 - **anthropic / openai** — sets `ANTHROPIC_BASE_URL` (with any trailing `/v1` stripped, since Claude Code appends its own) and passes the key via `claude --settings '{"apiKeyHelper": ...}'`, along with `disableClaudeAiConnectors: true` (connectors can't work through a gateway). The helper is the hidden `pm _resolve-key <profile>` command. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are cleared from the environment rather than set, and the settings only apply to that invocation — other sessions keep their claude.ai login. Note: any pre-existing `apiKeyHelper` entry in `~/.claude/settings.json` is removed before launch.
 - **bedrock** — clears `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_BASE_URL`, then sets `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, and `AWS_PROFILE`.
-- **subscription** — clears `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, and Bedrock/Vertex overrides so `claude` uses your claude.ai login.
+- **subscription** — clears `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, and Bedrock/Vertex overrides. With a token bound via `pm login`, sets `CLAUDE_CODE_OAUTH_TOKEN` so `claude` runs as that account; otherwise it also clears that variable and `claude` uses your claude.ai login.
 - **codex** (`tool: codex`) — writes `~/.codex/config.toml` with a `pm` provider pointing at the profile's `base_url`, and injects the key via the `env_key` env var. Note: the previous `config.toml` is not restored after codex exits; keep a copy if you maintain one by hand.
 
 ## Development
