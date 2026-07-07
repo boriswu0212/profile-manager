@@ -38,6 +38,7 @@ func init() {
 			if profile.AWSProfile != "" {
 				fmt.Printf("  AWS Prof:  %s\n", profile.AWSProfile)
 			}
+			fmt.Printf("  Context:   %s\n", config.FormatContextTokens(profile.MaxContextTokens))
 
 			keyType := "none"
 			switch {

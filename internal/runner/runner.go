@@ -96,8 +96,17 @@ func writeSettings(path string, settings map[string]any) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+func applyContextTokens(profile *config.Profile) {
+	if profile.MaxContextTokens > 0 {
+		os.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", fmt.Sprintf("%d", profile.MaxContextTokens))
+	} else {
+		os.Unsetenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+	}
+}
+
 func Run(profile *config.Profile, model string, extraArgs []string) error {
 	applyModelAndRecord(profile, model)
+	applyContextTokens(profile)
 
 	if profile.EffectiveTool() == config.ToolCodex {
 		return RunCodex(profile, model, extraArgs)
@@ -155,7 +164,11 @@ func applyModelAndRecord(profile *config.Profile, model string) {
 // so piped headless runs (`pm run p -- -p ...`) stay clean.
 func announce(profile *config.Profile, auth string) {
 	os.Setenv("PM_PROFILE", profile.Name)
-	fmt.Fprintf(os.Stderr, "pm ▸ profile %q · %s · %s\n", profile.Name, profile.EffectiveTool(), auth)
+	ctx := ""
+	if profile.MaxContextTokens > 0 {
+		ctx = " · context " + config.FormatContextTokens(profile.MaxContextTokens)
+	}
+	fmt.Fprintf(os.Stderr, "pm ▸ profile %q · %s · %s%s\n", profile.Name, profile.EffectiveTool(), auth, ctx)
 }
 
 func setupSignalHandler(cleanup func()) {
