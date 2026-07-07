@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 type Anthropic struct {
@@ -79,12 +81,12 @@ func (a *Anthropic) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	afterID := ""
 
 	for {
-		url := fmt.Sprintf("%s/models?limit=100", apiBase(a.baseURL))
+		reqURL := fmt.Sprintf("%s/models?limit=100", apiBase(a.baseURL))
 		if afterID != "" {
-			url += "&after_id=" + afterID
+			reqURL += "&after_id=" + afterID
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
@@ -98,6 +100,14 @@ func (a *Anthropic) ListModels(ctx context.Context) ([]ModelInfo, error) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			// If the Anthropic models endpoint fails and the base URL is not
+			// api.anthropic.com, fall back to the OpenAI-compatible endpoint.
+			// Some hosts (e.g. DeepSeek) accept Anthropic-format chat requests
+			// at a path like /anthropic but only expose models via OpenAI's
+			// GET /v1/models with Bearer auth.
+			if !isAnthropicHost(a.baseURL) {
+				return a.listModelsOpenAIFallback(ctx)
+			}
 			return nil, fmt.Errorf("API returned %d", resp.StatusCode)
 		}
 
@@ -124,4 +134,75 @@ func (a *Anthropic) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 
 	return all, nil
+}
+
+// isAnthropicHost returns true when the base URL points to Anthropic's own API.
+func isAnthropicHost(baseURL string) bool {
+	if baseURL == "" {
+		return true // default resolves to api.anthropic.com
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return u.Hostname() == "api.anthropic.com"
+}
+
+// openAIRootBase strips any Anthropic-specific path suffix (e.g. "/anthropic")
+// from the base URL and returns the root base suitable for OpenAI-compatible
+// endpoints. For example "https://api.deepseek.com/anthropic" becomes
+// "https://api.deepseek.com/v1".
+func openAIRootBase(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return apiBase(baseURL)
+	}
+	// Strip any trailing path component that is an Anthropic-specific prefix.
+	// We only do this when the path ends in "/anthropic" (the common pattern
+	// for hosts that serve both APIs side-by-side).
+	path := strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(path, "/anthropic") {
+		path = strings.TrimSuffix(path, "/anthropic")
+	}
+	// Strip /v1 if already present so apiBase can normalise.
+	path = strings.TrimSuffix(path, "/v1")
+	u.Path = path
+	return apiBase(u.String())
+}
+
+// listModelsOpenAIFallback queries the OpenAI-compatible GET /v1/models endpoint
+// using Bearer authentication. It is used when the Anthropic endpoint is not
+// available on the configured host.
+func (a *Anthropic) listModelsOpenAIFallback(ctx context.Context) ([]ModelInfo, error) {
+	fallbackURL := openAIRootBase(a.baseURL) + "/models"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", fallbackURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create fallback request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fallback request models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned %d", resp.StatusCode)
+	}
+
+	var result openaiModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode fallback response: %w", err)
+	}
+
+	var models []ModelInfo
+	for _, m := range result.Data {
+		models = append(models, ModelInfo{
+			ID:          m.ID,
+			DisplayName: m.OwnedBy,
+		})
+	}
+	return models, nil
 }
