@@ -41,12 +41,22 @@ type model struct {
 	loadingErr string
 	message    string
 
+	editingContext   bool
+	contextInput     string
+	contextPresetIdx int
+
 	width  int
 	height int
 
 	shouldLaunch  bool
 	launchProfile *config.Profile
 	launchModel   string
+}
+
+var contextPresets = []int{0, 1000000}
+
+func contextPresetLabel(v int) string {
+	return config.FormatContextTokens(v)
 }
 
 type modelsLoadedMsg struct {
@@ -77,6 +87,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.message = ""
 		m.loadingErr = ""
+
+		if m.editingContext {
+			return m.updateContextEdit(msg)
+		}
 
 		if m.searching {
 			return m.updateSearch(msg)
@@ -171,6 +185,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.message = fmt.Sprintf("Removed %q", name)
 			}
+
+		case "c":
+			if m.activePane == paneProfiles && len(m.profiles) > 0 {
+				p := m.profiles[m.profileCursor]
+				m.editingContext = true
+				m.contextInput = ""
+				m.contextPresetIdx = 0
+				for i, v := range contextPresets {
+					if v == p.MaxContextTokens {
+						m.contextPresetIdx = i
+						break
+					}
+				}
+			}
 		}
 
 	case modelsLoadedMsg:
@@ -243,6 +271,82 @@ func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+}
+
+func (m model) updateContextEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.editingContext = false
+		m.contextInput = ""
+		return m, nil
+
+	case "enter":
+		p := &m.profiles[m.profileCursor]
+		if m.contextInput != "" {
+			v := parseContextInput(m.contextInput)
+			if v > 0 {
+				p.MaxContextTokens = v
+			} else {
+				m.loadingErr = "invalid context value"
+				m.editingContext = false
+				m.contextInput = ""
+				return m, nil
+			}
+		} else {
+			p.MaxContextTokens = contextPresets[m.contextPresetIdx]
+		}
+		if err := m.cfg.Save(m.cfgPath); err != nil {
+			m.loadingErr = fmt.Sprintf("save config: %v", err)
+		} else {
+			m.message = fmt.Sprintf("Context for %q set to %s", p.Name, config.FormatContextTokens(p.MaxContextTokens))
+		}
+		m.editingContext = false
+		m.contextInput = ""
+		return m, nil
+
+	case "left", "h":
+		if m.contextInput == "" {
+			m.contextPresetIdx = (m.contextPresetIdx - 1 + len(contextPresets)) % len(contextPresets)
+		}
+		return m, nil
+
+	case "right", "l":
+		if m.contextInput == "" {
+			m.contextPresetIdx = (m.contextPresetIdx + 1) % len(contextPresets)
+		}
+		return m, nil
+
+	case "backspace":
+		if len(m.contextInput) > 0 {
+			m.contextInput = m.contextInput[:len(m.contextInput)-1]
+		}
+		return m, nil
+
+	default:
+		ch := msg.String()
+		if len(ch) == 1 && ch[0] >= '0' && ch[0] <= '9' {
+			m.contextInput += ch
+		}
+		return m, nil
+	}
+}
+
+func parseContextInput(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	v := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		v = v*10 + int(c-'0')
+	}
+	if v <= 0 {
+		return 0
+	}
+	return v
 }
 
 // moveModelCursor moves the model selection by delta, wrapping around at
@@ -429,6 +533,9 @@ func (m model) modelRowsAvail() int {
 // profileRowsAvail is the profiles-pane counterpart of modelRowsAvail.
 func (m model) profileRowsAvail() int {
 	h := m.listHeight() - 1 - 2 // title + ↑/↓ scroll indicators
+	if m.editingContext {
+		h-- // context editing line below the selected profile
+	}
 	if h < 1 {
 		h = 1
 	}
@@ -481,12 +588,14 @@ func (m model) View() string {
 	}
 
 	var footer string
-	if m.searching {
+	if m.editingContext {
+		footer = helpStyle.Render("[←/→] Switch preset  [0-9] Custom tokens  [Enter] Save  [Esc] Cancel")
+	} else if m.searching {
 		footer = helpStyle.Render("[Enter] Launch  [Ctrl+S] Set default model  [Esc] Clear search  [↑↓] Navigate")
 	} else if m.activePane == paneModels {
 		footer = helpStyle.Render("[Enter] Launch  [s] Set default model  [/] Search  [←] Profiles  [q] Quit")
 	} else {
-		footer = helpStyle.Render("[Enter] Launch  [m/→] Models  [/] Search  [s] Set default  [d] Delete  [q] Quit")
+		footer = helpStyle.Render("[Enter] Launch  [m/→] Models  [s] Set default  [c] Context  [d] Delete  [q] Quit")
 	}
 
 	if m.loadingErr != "" {
@@ -531,10 +640,26 @@ func (m model) renderProfiles(width, height int) string {
 		if p.EffectiveTool() == config.ToolCodex {
 			toolTag = "[codex] "
 		}
-		line := truncate(fmt.Sprintf("%-14s %s%s", p.Name, toolTag, modelShort), width-2)
+		nameCol := p.Name
+		if p.MaxContextTokens > 0 {
+			nameCol += " " + config.FormatContextTokens(p.MaxContextTokens)
+		}
+		line := truncate(fmt.Sprintf("%-14s %s%s", nameCol, toolTag, modelShort), width-2)
 
 		if i == m.profileCursor && m.activePane == paneProfiles {
-			s += selectedStyle.Render("> "+line) + "\n"
+			if m.editingContext {
+				var ctxLine string
+				if m.contextInput != "" {
+					ctxLine = fmt.Sprintf("  Context: %s█  (enter tokens, Enter to save)", m.contextInput)
+				} else {
+					label := contextPresetLabel(contextPresets[m.contextPresetIdx])
+					ctxLine = fmt.Sprintf("  Context: ◀ %s ▶  (←/→ switch, type number, Enter to save)", label)
+				}
+				s += selectedStyle.Render("> "+line) + "\n"
+				s += searchStyle.Render(truncate(ctxLine, width)) + "\n"
+			} else {
+				s += selectedStyle.Render("> "+line) + "\n"
+			}
 		} else {
 			s += normalStyle.Render(marker+line) + "\n"
 		}

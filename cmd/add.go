@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/boriswu0212/profile-manager/internal/config"
@@ -71,6 +72,15 @@ func init() {
 
 			default:
 				return fmt.Errorf("unknown provider: %s", p.Provider)
+			}
+
+			ctxStr := prompt("Max context tokens (e.g. 1000000 for 1M, empty for default 256k)", "")
+			if ctxStr != "" {
+				v, err := strconv.Atoi(ctxStr)
+				if err != nil || v <= 0 {
+					return fmt.Errorf("invalid context tokens: %s", ctxStr)
+				}
+				p.MaxContextTokens = v
 			}
 
 			cfg.Profiles = append(cfg.Profiles, p)

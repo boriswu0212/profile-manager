@@ -13,6 +13,144 @@ import (
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+// Pressing "c" enters context editing mode; left/right cycles presets,
+// Enter persists the selection to the config file.
+func TestContextEditPresetCycle(t *testing.T) {
+	path := t.TempDir() + "/config.yaml"
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "deepseek", Provider: config.ProviderOpenAI, Model: "deepseek-v4-pro"},
+		},
+	}
+	m := model{
+		cfg: cfg, cfgPath: path, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneProfiles,
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+	visible := func() string { return ansiRe.ReplaceAllString(m.View(), "") }
+
+	// press c to enter context editing
+	step(keyRunes("c"))
+	if !m.editingContext {
+		t.Fatal("expected context editing mode after pressing c")
+	}
+	if !strings.Contains(visible(), "Context:") {
+		t.Fatal("context editing line not visible")
+	}
+
+	// default preset index should be 0 (256k)
+	if m.contextPresetIdx != 0 {
+		t.Fatalf("preset index = %d, want 0", m.contextPresetIdx)
+	}
+
+	// press right to cycle to 1M
+	step(tea.KeyMsg{Type: tea.KeyRight})
+	if m.contextPresetIdx != 1 {
+		t.Fatalf("preset index = %d, want 1", m.contextPresetIdx)
+	}
+	if !strings.Contains(visible(), "1M") {
+		t.Fatal("1M preset not shown after right arrow")
+	}
+
+	// Enter to save
+	step(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.editingContext {
+		t.Fatal("should have exited context editing after Enter")
+	}
+	if m.profiles[0].MaxContextTokens != 1000000 {
+		t.Fatalf("MaxContextTokens = %d, want 1000000", m.profiles[0].MaxContextTokens)
+	}
+
+	// verify persisted
+	saved, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Profiles[0].MaxContextTokens != 1000000 {
+		t.Fatalf("saved MaxContextTokens = %d, want 1000000", saved.Profiles[0].MaxContextTokens)
+	}
+}
+
+// Typing digits in context editing mode sets a custom value.
+func TestContextEditCustomInput(t *testing.T) {
+	path := t.TempDir() + "/config.yaml"
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "custom", Provider: config.ProviderOpenAI, Model: "test-model"},
+		},
+	}
+	m := model{
+		cfg: cfg, cfgPath: path, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneProfiles,
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+
+	step(keyRunes("c"))
+	for _, r := range "500000" {
+		step(keyRunes(string(r)))
+	}
+	if m.contextInput != "500000" {
+		t.Fatalf("contextInput = %q, want 500000", m.contextInput)
+	}
+
+	step(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.profiles[0].MaxContextTokens != 500000 {
+		t.Fatalf("MaxContextTokens = %d, want 500000", m.profiles[0].MaxContextTokens)
+	}
+}
+
+// Esc cancels context editing without saving.
+func TestContextEditEscCancels(t *testing.T) {
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI, MaxContextTokens: 1000000},
+		},
+	}
+	m := model{
+		cfg: cfg, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneProfiles,
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+
+	step(keyRunes("c"))
+	step(tea.KeyMsg{Type: tea.KeyRight}) // cycle to different preset
+	step(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.editingContext {
+		t.Fatal("should have exited context editing after Esc")
+	}
+	if m.profiles[0].MaxContextTokens != 1000000 {
+		t.Fatalf("MaxContextTokens changed after Esc: %d", m.profiles[0].MaxContextTokens)
+	}
+}
+
+// Profile row shows [1M] tag when MaxContextTokens is set.
+func TestProfileRowShowsContextTag(t *testing.T) {
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "deepseek", Provider: config.ProviderOpenAI, Model: "deepseek-v4", MaxContextTokens: 1000000},
+			{Name: "default", Provider: config.ProviderOpenAI, Model: "gpt-4"},
+		},
+	}
+	m := model{cfg: cfg, profiles: cfg.Profiles, width: 90, height: 20}
+	view := ansiRe.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, "1M") {
+		t.Fatalf("expected 1M tag in profile row for deepseek\nview:\n%s", view)
+	}
+}
+
 func keyRunes(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }

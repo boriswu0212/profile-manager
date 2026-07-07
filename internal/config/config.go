@@ -46,8 +46,24 @@ type Profile struct {
 	// profiles: a user-declared label for which claude.ai account the token
 	// belongs to (setup-token tokens carry only user:inference scope, so the
 	// API refuses to reveal their identity) and the date the token was bound.
-	Account      string `yaml:"account,omitempty"`
-	TokenBoundAt string `yaml:"token_bound_at,omitempty"`
+	Account          string `yaml:"account,omitempty"`
+	TokenBoundAt     string `yaml:"token_bound_at,omitempty"`
+	MaxContextTokens int    `yaml:"max_context_tokens,omitempty"`
+}
+
+const DefaultMaxContextTokens = 256000
+
+func FormatContextTokens(n int) string {
+	if n <= 0 {
+		return "256k"
+	}
+	if n%1000000 == 0 {
+		return fmt.Sprintf("%dM", n/1000000)
+	}
+	if n%1000 == 0 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func (p *Profile) EffectiveTool() string {
