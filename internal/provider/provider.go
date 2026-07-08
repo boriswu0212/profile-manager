@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/config"
 )
 
 // apiBase normalises a user-supplied base URL so that appending

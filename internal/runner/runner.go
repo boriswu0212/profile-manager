@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/config"
 )
 
 // anthropicBaseURL normalises a user-supplied base URL for ANTHROPIC_BASE_URL,

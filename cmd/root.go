@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
-	"github.com/boriswu0212/profile-manager/internal/tui"
+	"github.com/b0riswu/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/tui"
 	"github.com/spf13/cobra"
 )
 

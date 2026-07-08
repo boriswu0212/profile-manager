@@ -1,4 +1,4 @@
-module github.com/boriswu0212/profile-manager
+module github.com/b0riswu/profile-manager
 
 go 1.26.4
 

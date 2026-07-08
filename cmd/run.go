@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/boriswu0212/profile-manager/internal/runner"
+	"github.com/b0riswu/profile-manager/internal/runner"
 	"github.com/spf13/cobra"
 )
 

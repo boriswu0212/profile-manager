@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/config"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
