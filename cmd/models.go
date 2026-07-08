@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/boriswu0212/profile-manager/internal/provider"
+	"github.com/b0riswu/profile-manager/internal/provider"
 	"github.com/spf13/cobra"
 )
 

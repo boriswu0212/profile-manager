@@ -1,6 +1,6 @@
 package main
 
-import "github.com/boriswu0212/profile-manager/cmd"
+import "github.com/b0riswu/profile-manager/cmd"
 
 // version is overridden at release time by goreleaser via -ldflags.
 var version = "dev"

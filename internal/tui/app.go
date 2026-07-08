@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
-	"github.com/boriswu0212/profile-manager/internal/provider"
-	"github.com/boriswu0212/profile-manager/internal/runner"
+	"github.com/b0riswu/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/provider"
+	"github.com/b0riswu/profile-manager/internal/runner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )

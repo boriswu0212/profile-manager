@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/config"
 	"github.com/spf13/cobra"
 )
 

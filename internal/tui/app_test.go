@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/boriswu0212/profile-manager/internal/config"
-	"github.com/boriswu0212/profile-manager/internal/provider"
+	"github.com/b0riswu/profile-manager/internal/config"
+	"github.com/b0riswu/profile-manager/internal/provider"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
