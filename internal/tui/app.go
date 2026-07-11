@@ -44,6 +44,9 @@ type model struct {
 	editingContext   bool
 	contextInput     string
 	contextPresetIdx int
+	contextForModel  bool
+	contextModelID   string
+	contextPresets   []int
 
 	width  int
 	height int
@@ -57,6 +60,13 @@ var contextPresets = []int{0, 1000000}
 
 func contextPresetLabel(v int) string {
 	return config.FormatContextTokens(v)
+}
+
+func buildModelPresets(mod provider.ModelInfo) []int {
+	if mod.MaxInputTokens > 0 && mod.MaxInputTokens != contextPresets[len(contextPresets)-1] {
+		return []int{0, mod.MaxInputTokens}
+	}
+	return contextPresets
 }
 
 type modelsLoadedMsg struct {
@@ -191,11 +201,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := m.profiles[m.profileCursor]
 				m.editingContext = true
 				m.contextInput = ""
+				m.contextForModel = false
+				m.contextPresets = contextPresets
 				m.contextPresetIdx = 0
-				for i, v := range contextPresets {
+				for i, v := range m.contextPresets {
 					if v == p.MaxContextTokens {
 						m.contextPresetIdx = i
 						break
+					}
+				}
+			} else if m.activePane == paneModels && len(m.models) > 0 {
+				vis := m.visibleModels()
+				if m.modelCursor < len(vis) {
+					mod := vis[m.modelCursor]
+					p := m.profiles[m.profileCursor]
+					m.editingContext = true
+					m.contextInput = ""
+					m.contextForModel = true
+					m.contextModelID = mod.ID
+					m.contextPresets = buildModelPresets(mod)
+					m.contextPresetIdx = 0
+					current := p.ResolveContextTokens(mod.ID)
+					for i, v := range m.contextPresets {
+						if v == current {
+							m.contextPresetIdx = i
+							break
+						}
 					}
 				}
 			}
@@ -274,6 +305,11 @@ func (m model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateContextEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	presets := m.contextPresets
+	if len(presets) == 0 {
+		presets = contextPresets
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.editingContext = false
@@ -282,23 +318,43 @@ func (m model) updateContextEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		p := &m.profiles[m.profileCursor]
+		var v int
 		if m.contextInput != "" {
-			v := parseContextInput(m.contextInput)
-			if v > 0 {
-				p.MaxContextTokens = v
-			} else {
+			v = parseContextInput(m.contextInput)
+			if v <= 0 {
 				m.loadingErr = "invalid context value"
 				m.editingContext = false
 				m.contextInput = ""
 				return m, nil
 			}
 		} else {
-			p.MaxContextTokens = contextPresets[m.contextPresetIdx]
+			v = presets[m.contextPresetIdx]
 		}
+
+		if m.contextForModel {
+			if p.ModelContext == nil {
+				p.ModelContext = make(map[string]int)
+			}
+			if v == 0 {
+				delete(p.ModelContext, m.contextModelID)
+				if len(p.ModelContext) == 0 {
+					p.ModelContext = nil
+				}
+			} else {
+				p.ModelContext[m.contextModelID] = v
+			}
+		} else {
+			p.MaxContextTokens = v
+		}
+
 		if err := m.cfg.Save(m.cfgPath); err != nil {
 			m.loadingErr = fmt.Sprintf("save config: %v", err)
 		} else {
-			m.message = fmt.Sprintf("Context for %q set to %s", p.Name, config.FormatContextTokens(p.MaxContextTokens))
+			target := p.Name
+			if m.contextForModel {
+				target = m.contextModelID
+			}
+			m.message = fmt.Sprintf("Context for %q set to %s", target, config.FormatContextTokens(v))
 		}
 		m.editingContext = false
 		m.contextInput = ""
@@ -306,13 +362,13 @@ func (m model) updateContextEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "left", "h":
 		if m.contextInput == "" {
-			m.contextPresetIdx = (m.contextPresetIdx - 1 + len(contextPresets)) % len(contextPresets)
+			m.contextPresetIdx = (m.contextPresetIdx - 1 + len(presets)) % len(presets)
 		}
 		return m, nil
 
 	case "right", "l":
 		if m.contextInput == "" {
-			m.contextPresetIdx = (m.contextPresetIdx + 1) % len(contextPresets)
+			m.contextPresetIdx = (m.contextPresetIdx + 1) % len(presets)
 		}
 		return m, nil
 
@@ -523,6 +579,9 @@ func (m model) modelRowsAvail() int {
 	} else if n := len(m.visibleRecent()); n > 0 {
 		h -= n + 2 // "Recent" label + entries + separator
 	}
+	if m.editingContext && m.contextForModel {
+		h-- // context editing line below the selected model
+	}
 	h -= 2 // reserved for the ↑/↓ scroll indicators
 	if h < 1 {
 		h = 1
@@ -593,7 +652,7 @@ func (m model) View() string {
 	} else if m.searching {
 		footer = helpStyle.Render("[Enter] Launch  [Ctrl+S] Set default model  [Esc] Clear search  [↑↓] Navigate")
 	} else if m.activePane == paneModels {
-		footer = helpStyle.Render("[Enter] Launch  [s] Set default model  [/] Search  [←] Profiles  [q] Quit")
+		footer = helpStyle.Render("[Enter] Launch  [s] Set default model  [c] Context  [/] Search  [←] Profiles  [q] Quit")
 	} else {
 		footer = helpStyle.Render("[Enter] Launch  [m/→] Models  [s] Set default  [c] Context  [d] Delete  [q] Quit")
 	}
@@ -652,7 +711,11 @@ func (m model) renderProfiles(width, height int) string {
 				if m.contextInput != "" {
 					ctxLine = fmt.Sprintf("  Context: %s█  (enter tokens, Enter to save)", m.contextInput)
 				} else {
-					label := contextPresetLabel(contextPresets[m.contextPresetIdx])
+					presets := m.contextPresets
+				if len(presets) == 0 {
+					presets = contextPresets
+				}
+				label := contextPresetLabel(presets[m.contextPresetIdx])
 					ctxLine = fmt.Sprintf("  Context: ◀ %s ▶  (←/→ switch, type number, Enter to save)", label)
 				}
 				s += selectedStyle.Render("> "+line) + "\n"
@@ -718,16 +781,40 @@ func (m model) renderModels(width, height int) string {
 
 	hasMore := end < len(vis)
 
+	var modelCtx map[string]int
+	if len(m.profiles) > 0 {
+		modelCtx = m.profiles[m.profileCursor].ModelContext
+	}
+
 	for i := m.modelScroll; i < end; i++ {
 		mod := vis[i]
 		line := mod.ID
 		if mod.DisplayName != "" && mod.DisplayName != mod.ID {
 			line = fmt.Sprintf("%s  %s", mod.ID, mod.DisplayName)
 		}
+		if v, ok := modelCtx[mod.ID]; ok && v > 0 {
+			line += " " + config.FormatContextTokens(v)
+		}
 		line = truncate(line, width-2)
 
 		if i == m.modelCursor && m.activePane == paneModels {
-			s += selectedStyle.Render("> "+line) + "\n"
+			if m.editingContext && m.contextForModel {
+				presets := m.contextPresets
+				if len(presets) == 0 {
+					presets = contextPresets
+				}
+				var ctxLine string
+				if m.contextInput != "" {
+					ctxLine = fmt.Sprintf("  Context: %s█  (enter tokens, Enter to save)", m.contextInput)
+				} else {
+					label := contextPresetLabel(presets[m.contextPresetIdx])
+					ctxLine = fmt.Sprintf("  Context: ◀ %s ▶  (←/→ switch, type number, Enter to save)", label)
+				}
+				s += selectedStyle.Render("> "+line) + "\n"
+				s += searchStyle.Render(truncate(ctxLine, width)) + "\n"
+			} else {
+				s += selectedStyle.Render("> "+line) + "\n"
+			}
 		} else {
 			s += normalStyle.Render("  "+line) + "\n"
 		}

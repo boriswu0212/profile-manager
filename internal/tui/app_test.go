@@ -334,3 +334,155 @@ func TestProfileRowDoesNotWrap(t *testing.T) {
 		}
 	}
 }
+
+// Press "c" in the models pane: cycle preset, enter — verify ModelContext[modelID] saved.
+func TestModelContextEdit(t *testing.T) {
+	path := t.TempDir() + "/config.yaml"
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI, Model: "gpt-4"},
+		},
+	}
+	m := model{
+		cfg: cfg, cfgPath: path, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneModels,
+		models: []provider.ModelInfo{
+			{ID: "claude-opus-4", MaxInputTokens: 200000},
+			{ID: "claude-sonnet-5", MaxInputTokens: 1048576},
+		},
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+
+	// move to claude-sonnet-5
+	step(tea.KeyMsg{Type: tea.KeyDown})
+	step(keyRunes("c"))
+	if !m.editingContext {
+		t.Fatal("expected context editing mode after pressing c in models pane")
+	}
+	if !m.contextForModel {
+		t.Fatal("expected contextForModel=true")
+	}
+	if m.contextModelID != "claude-sonnet-5" {
+		t.Fatalf("contextModelID = %q, want claude-sonnet-5", m.contextModelID)
+	}
+
+	// cycle to 1048576 (MaxInputTokens) preset
+	step(tea.KeyMsg{Type: tea.KeyRight})
+	step(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.editingContext {
+		t.Fatal("should have exited context editing after Enter")
+	}
+	if m.profiles[0].ModelContext == nil {
+		t.Fatal("ModelContext is nil after save")
+	}
+	if got := m.profiles[0].ModelContext["claude-sonnet-5"]; got != 1048576 {
+		t.Fatalf("ModelContext[claude-sonnet-5] = %d, want 1048576", got)
+	}
+
+	saved, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Profiles[0].ModelContext["claude-sonnet-5"] != 1048576 {
+		t.Fatalf("saved ModelContext = %v", saved.Profiles[0].ModelContext)
+	}
+}
+
+// Type custom digits for model context, verify saved.
+func TestModelContextEditCustom(t *testing.T) {
+	path := t.TempDir() + "/config.yaml"
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI, Model: "gpt-4"},
+		},
+	}
+	m := model{
+		cfg: cfg, cfgPath: path, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneModels,
+		models: []provider.ModelInfo{
+			{ID: "claude-opus-4", MaxInputTokens: 200000},
+		},
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+
+	step(keyRunes("c"))
+	for _, r := range "500000" {
+		step(keyRunes(string(r)))
+	}
+	step(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := m.profiles[0].ModelContext["claude-opus-4"]; got != 500000 {
+		t.Fatalf("ModelContext[claude-opus-4] = %d, want 500000", got)
+	}
+}
+
+// Esc in model context editing does not save.
+func TestModelContextEditEscCancels(t *testing.T) {
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI},
+		},
+	}
+	m := model{
+		cfg: cfg, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneModels,
+		models: []provider.ModelInfo{
+			{ID: "claude-opus-4", MaxInputTokens: 200000},
+		},
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+
+	step(keyRunes("c"))
+	step(tea.KeyMsg{Type: tea.KeyRight}) // cycle preset
+	step(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.editingContext {
+		t.Fatal("should have exited context editing after Esc")
+	}
+	if m.profiles[0].ModelContext != nil {
+		t.Fatalf("ModelContext should be nil after Esc, got %v", m.profiles[0].ModelContext)
+	}
+}
+
+// Model row shows context tag when per-model override exists.
+func TestModelRowShowsContextTag(t *testing.T) {
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI, ModelContext: map[string]int{
+				"claude-opus-4": 1000000,
+			}},
+		},
+	}
+	m := model{
+		cfg: cfg, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneModels,
+		models: []provider.ModelInfo{
+			{ID: "claude-opus-4"},
+			{ID: "claude-sonnet-5"},
+		},
+	}
+
+	view := ansiRe.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, "claude-opus-4 1M") {
+		t.Fatalf("expected context tag '1M' next to claude-opus-4\nview:\n%s", view)
+	}
+	// claude-sonnet-5 should NOT have a context tag
+	for _, ln := range strings.Split(view, "\n") {
+		if strings.Contains(ln, "claude-sonnet-5") && strings.Contains(ln, "1M") {
+			t.Fatalf("claude-sonnet-5 should not have a context tag: %q", ln)
+		}
+	}
+}
