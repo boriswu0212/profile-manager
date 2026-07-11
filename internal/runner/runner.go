@@ -97,8 +97,8 @@ func writeSettings(path string, settings map[string]any) error {
 }
 
 func applyContextTokens(profile *config.Profile) {
-	if profile.MaxContextTokens > 0 {
-		os.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", fmt.Sprintf("%d", profile.MaxContextTokens))
+	if v := profile.ResolveContextTokens(profile.Model); v > 0 {
+		os.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", fmt.Sprintf("%d", v))
 	} else {
 		os.Unsetenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
 	}
@@ -165,8 +165,8 @@ func applyModelAndRecord(profile *config.Profile, model string) {
 func announce(profile *config.Profile, auth string) {
 	os.Setenv("PM_PROFILE", profile.Name)
 	ctx := ""
-	if profile.MaxContextTokens > 0 {
-		ctx = " · context " + config.FormatContextTokens(profile.MaxContextTokens)
+	if v := profile.ResolveContextTokens(profile.Model); v > 0 {
+		ctx = " · context " + config.FormatContextTokens(v)
 	}
 	fmt.Fprintf(os.Stderr, "pm ▸ profile %q · %s · %s%s\n", profile.Name, profile.EffectiveTool(), auth, ctx)
 }

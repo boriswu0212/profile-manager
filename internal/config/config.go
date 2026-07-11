@@ -48,7 +48,17 @@ type Profile struct {
 	// API refuses to reveal their identity) and the date the token was bound.
 	Account          string `yaml:"account,omitempty"`
 	TokenBoundAt     string `yaml:"token_bound_at,omitempty"`
-	MaxContextTokens int    `yaml:"max_context_tokens,omitempty"`
+	MaxContextTokens int            `yaml:"max_context_tokens,omitempty"`
+	ModelContext     map[string]int  `yaml:"model_context,omitempty"`
+}
+
+func (p *Profile) ResolveContextTokens(model string) int {
+	if p.ModelContext != nil {
+		if v, ok := p.ModelContext[model]; ok {
+			return v
+		}
+	}
+	return p.MaxContextTokens
 }
 
 const DefaultMaxContextTokens = 256000
