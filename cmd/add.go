@@ -83,6 +83,8 @@ func init() {
 				p.MaxContextTokens = v
 			}
 
+			p.SettingsPath = prompt("Additional settings JSON path (empty for none)", "")
+
 			cfg.Profiles = append(cfg.Profiles, p)
 			if cfg.DefaultProfile == "" {
 				cfg.DefaultProfile = p.Name

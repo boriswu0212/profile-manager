@@ -50,6 +50,7 @@ type Profile struct {
 	TokenBoundAt     string `yaml:"token_bound_at,omitempty"`
 	MaxContextTokens int            `yaml:"max_context_tokens,omitempty"`
 	ModelContext     map[string]int  `yaml:"model_context,omitempty"`
+	SettingsPath     string          `yaml:"settings_path,omitempty"`
 }
 
 func (p *Profile) ResolveContextTokens(model string) int {
