@@ -486,3 +486,93 @@ func TestModelRowShowsContextTag(t *testing.T) {
 		}
 	}
 }
+
+// Pressing S enters settings path editing, Enter saves.
+func TestSettingsEditBasic(t *testing.T) {
+	path := t.TempDir() + "/config.yaml"
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI, Model: "gpt-4"},
+		},
+	}
+	m := model{
+		cfg: cfg, cfgPath: path, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneProfiles,
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+	visible := func() string { return ansiRe.ReplaceAllString(m.View(), "") }
+
+	// Press S to enter settings editing
+	step(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	if !m.editingSettings {
+		t.Fatal("expected settings editing mode after pressing S")
+	}
+	if !strings.Contains(visible(), "Settings:") {
+		t.Fatal("settings editing line not visible")
+	}
+	if m.settingsInput != "" {
+		t.Fatalf("settingsInput = %q, want empty", m.settingsInput)
+	}
+
+	// Type a path
+	for _, ch := range "/tmp/test-settings.json" {
+		step(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+	}
+	if m.settingsInput != "/tmp/test-settings.json" {
+		t.Fatalf("settingsInput = %q, want /tmp/test-settings.json", m.settingsInput)
+	}
+
+	// Enter to save
+	step(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.editingSettings {
+		t.Fatal("should have exited settings editing after Enter")
+	}
+	if m.profiles[0].SettingsPath != "/tmp/test-settings.json" {
+		t.Fatalf("SettingsPath = %q, want /tmp/test-settings.json", m.profiles[0].SettingsPath)
+	}
+
+	// Verify persisted
+	saved, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Profiles[0].SettingsPath != "/tmp/test-settings.json" {
+		t.Fatalf("saved SettingsPath = %q, want /tmp/test-settings.json", saved.Profiles[0].SettingsPath)
+	}
+}
+
+// Esc cancels settings path editing without saving.
+func TestSettingsEditEscCancels(t *testing.T) {
+	cfg := &config.Config{
+		Profiles: []config.Profile{
+			{Name: "test", Provider: config.ProviderOpenAI, SettingsPath: "/existing/path.json"},
+		},
+	}
+	m := model{
+		cfg: cfg, profiles: cfg.Profiles,
+		width: 90, height: 20, activePane: paneProfiles,
+	}
+
+	step := func(msg tea.KeyMsg) {
+		next, _ := m.Update(msg)
+		m = next.(model)
+	}
+
+	step(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	// Type new path
+	for _, ch := range "/new/path.json" {
+		step(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+	}
+	step(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.editingSettings {
+		t.Fatal("should have exited settings editing after Esc")
+	}
+	if m.profiles[0].SettingsPath != "/existing/path.json" {
+		t.Fatalf("SettingsPath changed after Esc: %q", m.profiles[0].SettingsPath)
+	}
+}

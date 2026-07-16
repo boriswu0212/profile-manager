@@ -48,6 +48,9 @@ type model struct {
 	contextModelID   string
 	contextPresets   []int
 
+	editingSettings bool
+	settingsInput   string
+
 	width  int
 	height int
 
@@ -100,6 +103,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.editingContext {
 			return m.updateContextEdit(msg)
+		}
+
+		if m.editingSettings {
+			return m.updateSettingsEdit(msg)
 		}
 
 		if m.searching {
@@ -229,6 +236,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
+			}
+		case "S":
+			if m.activePane == paneProfiles && len(m.profiles) > 0 {
+				m.editingSettings = true
+				m.settingsInput = m.profiles[m.profileCursor].SettingsPath
 			}
 		}
 
@@ -383,6 +395,37 @@ func (m model) updateContextEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(ch) == 1 && ch[0] >= '0' && ch[0] <= '9' {
 			m.contextInput += ch
 		}
+		return m, nil
+	}
+}
+
+func (m model) updateSettingsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.editingSettings = false
+		m.settingsInput = ""
+		return m, nil
+
+	case "enter":
+		p := &m.profiles[m.profileCursor]
+		p.SettingsPath = strings.TrimSpace(m.settingsInput)
+		if err := m.cfg.Save(m.cfgPath); err != nil {
+			m.loadingErr = fmt.Sprintf("save config: %v", err)
+		} else {
+			m.message = fmt.Sprintf("Settings path for %q set to %q", p.Name, p.SettingsPath)
+		}
+		m.editingSettings = false
+		m.settingsInput = ""
+		return m, nil
+
+	case "backspace":
+		if len(m.settingsInput) > 0 {
+			m.settingsInput = m.settingsInput[:len(m.settingsInput)-1]
+		}
+		return m, nil
+
+	default:
+		m.settingsInput += string(msg.Runes)
 		return m, nil
 	}
 }
@@ -595,6 +638,9 @@ func (m model) profileRowsAvail() int {
 	if m.editingContext {
 		h-- // context editing line below the selected profile
 	}
+	if m.editingSettings {
+		h-- // settings editing line below the selected profile
+	}
 	if h < 1 {
 		h = 1
 	}
@@ -647,14 +693,16 @@ func (m model) View() string {
 	}
 
 	var footer string
-	if m.editingContext {
+	if m.editingSettings {
+		footer = helpStyle.Render("Type path then [Enter] Save  [Esc] Cancel")
+	} else if m.editingContext {
 		footer = helpStyle.Render("[←/→] Switch preset  [0-9] Custom tokens  [Enter] Save  [Esc] Cancel")
 	} else if m.searching {
 		footer = helpStyle.Render("[Enter] Launch  [Ctrl+S] Set default model  [Esc] Clear search  [↑↓] Navigate")
 	} else if m.activePane == paneModels {
 		footer = helpStyle.Render("[Enter] Launch  [s] Set default model  [c] Context  [/] Search  [←] Profiles  [q] Quit")
 	} else {
-		footer = helpStyle.Render("[Enter] Launch  [m/→] Models  [s] Set default  [c] Context  [d] Delete  [q] Quit")
+		footer = helpStyle.Render("[Enter] Launch  [m/→] Models  [s] Set default  [c] Context  [S] Settings path  [d] Delete  [q] Quit")
 	}
 
 	if m.loadingErr != "" {
@@ -720,6 +768,10 @@ func (m model) renderProfiles(width, height int) string {
 				}
 				s += selectedStyle.Render("> "+line) + "\n"
 				s += searchStyle.Render(truncate(ctxLine, width)) + "\n"
+			} else if m.editingSettings {
+				s += selectedStyle.Render("> "+line) + "\n"
+				settingsLine := fmt.Sprintf("  Settings: %s█  (Enter to save, Esc to cancel)", m.settingsInput)
+				s += searchStyle.Render(truncate(settingsLine, width)) + "\n"
 			} else {
 				s += selectedStyle.Render("> "+line) + "\n"
 			}

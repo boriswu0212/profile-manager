@@ -40,6 +40,10 @@ func init() {
 			}
 			fmt.Printf("  Context:   %s\n", config.FormatContextTokens(profile.MaxContextTokens))
 
+			if profile.SettingsPath != "" {
+				fmt.Printf("  Settings:  %s\n", profile.SettingsPath)
+			}
+
 			keyType := "none"
 			switch {
 			case profile.Provider == "subscription":

@@ -96,6 +96,118 @@ func writeSettings(path string, settings map[string]any) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+// loadAdditionalSettings reads the JSON settings file at path and returns its
+// contents as a map. An empty path is silently skipped. File-not-found prints a
+// warning to stderr and returns nil (launch proceeds without extra settings).
+// Both standard JSON and JSONC (comments, trailing commas) are accepted.
+func loadAdditionalSettings(path string) (map[string]any, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("expand ~ in settings_path: %w", err)
+		}
+		path = filepath.Join(home, path[2:])
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "pm warning: settings_path %q not found, skipping\n", path)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read additional settings %q: %w", path, err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		// Retry with JSONC (comments + trailing commas stripped).
+		cleaned := cleanJSONC(data)
+		if err2 := json.Unmarshal(cleaned, &settings); err2 != nil {
+			return nil, fmt.Errorf("parse additional settings %q: %w", path, err)
+		}
+	}
+
+	return settings, nil
+}
+
+// cleanJSONC strips // line comments, /* */ block comments, and trailing
+// commas from JSON-like input so that standard json.Unmarshal can parse it.
+func cleanJSONC(data []byte) []byte {
+	s := string(data)
+	var out strings.Builder
+	out.Grow(len(s))
+
+	i := 0
+	for i < len(s) {
+		// String literal — copy until the closing unescaped quote.
+		if s[i] == '"' {
+			out.WriteByte('"')
+			i++
+			for i < len(s) {
+				if s[i] == '\\' && i+1 < len(s) {
+					out.WriteByte(s[i])
+					i++
+					out.WriteByte(s[i])
+					i++
+					continue
+				}
+				if s[i] == '"' {
+					out.WriteByte('"')
+					i++
+					break
+				}
+				out.WriteByte(s[i])
+				i++
+			}
+			continue
+		}
+
+		// Line comment — skip to end of line.
+		if s[i] == '/' && i+1 < len(s) && s[i+1] == '/' {
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			continue
+		}
+
+		// Block comment — skip to */
+		if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+			i += 2
+			for i < len(s) {
+				if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+			continue
+		}
+
+		// Trailing comma before } or ] — skip the comma, keep the whitespace
+		// before it (which may include newlines).
+		if s[i] == ',' {
+			j := i + 1
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r') {
+				j++
+			}
+			if j < len(s) && (s[j] == '}' || s[j] == ']') {
+				// Skip the comma and the whitespace after it, keep the closer.
+				i = j
+				continue
+			}
+		}
+
+		out.WriteByte(s[i])
+		i++
+	}
+
+	return []byte(out.String())
+}
+
 func applyContextTokens(profile *config.Profile) {
 	if v := profile.ResolveContextTokens(profile.Model); v > 0 {
 		os.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", fmt.Sprintf("%d", v))
@@ -211,12 +323,25 @@ func runWithAPIKeyHelper(cp string, profile *config.Profile, args []string) erro
 		os.Setenv("ANTHROPIC_BASE_URL", anthropicBaseURL(profile.BaseURL))
 	}
 
-	flagSettings, err := json.Marshal(map[string]any{
-		"apiKeyHelper": fmt.Sprintf("%q _resolve-key %q", selfPath(), profile.Name),
-		// claude.ai connectors cannot work through a non-claude.ai gateway;
-		// disabling them explicitly also silences the startup notice about it.
-		"disableClaudeAiConnectors": true,
-	})
+	// Build --settings JSON, merging additional settings file on top of
+	// the base ~/.claude/settings.json, with runner-owned keys last so they
+	// always take precedence.
+	settingsMap := make(map[string]any)
+
+	if profile.SettingsPath != "" {
+		extra, err := loadAdditionalSettings(profile.SettingsPath)
+		if err != nil {
+			return err
+		}
+		for k, v := range extra {
+			settingsMap[k] = v
+		}
+	}
+
+	settingsMap["apiKeyHelper"] = fmt.Sprintf("%q _resolve-key %q", selfPath(), profile.Name)
+	settingsMap["disableClaudeAiConnectors"] = true
+
+	flagSettings, err := json.Marshal(settingsMap)
 	if err != nil {
 		return fmt.Errorf("marshal flag settings: %w", err)
 	}
