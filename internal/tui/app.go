@@ -735,6 +735,40 @@ func (m model) renderProfiles(width, height int) string {
 
 	hasMore := end < len(m.profiles)
 
+	needName := 0
+	needModel := 0
+	for _, p := range m.profiles {
+		n := len(p.Name)
+		if p.MaxContextTokens > 0 {
+			n += 1 + len(config.FormatContextTokens(p.MaxContextTokens))
+		}
+		if n > needName {
+			needName = n
+		}
+		ml := len(shortModel(p.Model))
+		if p.EffectiveTool() == config.ToolCodex {
+			ml += len("[codex] ")
+		}
+		if ml > needModel {
+			needModel = ml
+		}
+	}
+
+	const minName = 8
+	avail := width - 2 - 1
+	nameWidth, modelWidth := needName, needModel
+	if nameWidth+modelWidth <= avail {
+		// both fit naturally — pad name column for alignment
+	} else if avail >= minName+needModel {
+		nameWidth = avail - needModel
+	} else if avail >= minName {
+		nameWidth = minName
+		modelWidth = avail - minName
+	} else {
+		nameWidth = avail
+		modelWidth = 0
+	}
+
 	for i := m.profileScroll; i < end; i++ {
 		p := m.profiles[i]
 		marker := "  "
@@ -751,7 +785,9 @@ func (m model) renderProfiles(width, height int) string {
 		if p.MaxContextTokens > 0 {
 			nameCol += " " + config.FormatContextTokens(p.MaxContextTokens)
 		}
-		line := truncate(fmt.Sprintf("%-14s %s%s", nameCol, toolTag, modelShort), width-2)
+		nameCol = truncate(nameCol, nameWidth)
+		modelCol := truncate(toolTag+modelShort, modelWidth)
+		line := truncate(fmt.Sprintf("%-*s %s", nameWidth, nameCol, modelCol), width-2)
 
 		if i == m.profileCursor && m.activePane == paneProfiles {
 			if m.editingContext {
@@ -917,9 +953,6 @@ func shortModel(model string) string {
 		if contains(model, key) {
 			return short
 		}
-	}
-	if len(model) > 12 {
-		return model[:12] + "…"
 	}
 	return model
 }

@@ -335,6 +335,38 @@ func TestProfileRowDoesNotWrap(t *testing.T) {
 	}
 }
 
+func TestProfileColumnWidthAdaptsToWindowSize(t *testing.T) {
+	cfg := &config.Config{
+		DefaultProfile: "long-profile-name",
+		Profiles: []config.Profile{
+			{Name: "long-profile-name", Provider: config.ProviderOpenAI, Model: "claude-4-sonnet"},
+		},
+	}
+	strip := func(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+	// Both widths are in split-pane mode (>=60). A wider terminal gives a wider
+	// profile pane, so the name column should be wider too.
+	findNameEnd := func(w int) int {
+		m := model{cfg: cfg, profiles: cfg.Profiles, width: w, height: 20}
+		for _, ln := range strings.Split(strip(m.View()), "\n") {
+			if strings.Contains(ln, "sonnet") {
+				idx := strings.Index(ln, "sonnet")
+				return idx
+			}
+		}
+		return -1
+	}
+
+	medium := findNameEnd(80)
+	wide := findNameEnd(150)
+	if medium < 0 || wide < 0 {
+		t.Fatal("could not find profile row with model info")
+	}
+	if wide <= medium {
+		t.Fatalf("expected wider name column at width 150 (%d) than at width 80 (%d)", wide, medium)
+	}
+}
+
 // Press "c" in the models pane: cycle preset, enter — verify ModelContext[modelID] saved.
 func TestModelContextEdit(t *testing.T) {
 	path := t.TempDir() + "/config.yaml"
