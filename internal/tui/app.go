@@ -735,6 +735,28 @@ func (m model) renderProfiles(width, height int) string {
 
 	hasMore := end < len(m.profiles)
 
+	nameWidth := 0
+	for _, p := range m.profiles {
+		n := len(p.Name)
+		if p.MaxContextTokens > 0 {
+			n += 1 + len(config.FormatContextTokens(p.MaxContextTokens))
+		}
+		if n > nameWidth {
+			nameWidth = n
+		}
+	}
+	nameWidth += 2
+	if nameWidth < 8 {
+		nameWidth = 8
+	}
+	maxName := width / 2
+	if maxName > 30 {
+		maxName = 30
+	}
+	if nameWidth > maxName {
+		nameWidth = maxName
+	}
+
 	for i := m.profileScroll; i < end; i++ {
 		p := m.profiles[i]
 		marker := "  "
@@ -750,12 +772,6 @@ func (m model) renderProfiles(width, height int) string {
 		nameCol := p.Name
 		if p.MaxContextTokens > 0 {
 			nameCol += " " + config.FormatContextTokens(p.MaxContextTokens)
-		}
-		nameWidth := width / 2
-		if nameWidth < 8 {
-			nameWidth = 8
-		} else if nameWidth > 30 {
-			nameWidth = 30
 		}
 		nameCol = truncate(nameCol, nameWidth)
 		line := truncate(fmt.Sprintf("%-*s %s%s", nameWidth, nameCol, toolTag, modelShort), width-2)
