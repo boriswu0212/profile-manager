@@ -751,7 +751,14 @@ func (m model) renderProfiles(width, height int) string {
 		if p.MaxContextTokens > 0 {
 			nameCol += " " + config.FormatContextTokens(p.MaxContextTokens)
 		}
-		line := truncate(fmt.Sprintf("%-14s %s%s", nameCol, toolTag, modelShort), width-2)
+		nameWidth := width / 2
+		if nameWidth < 8 {
+			nameWidth = 8
+		} else if nameWidth > 30 {
+			nameWidth = 30
+		}
+		nameCol = truncate(nameCol, nameWidth)
+		line := truncate(fmt.Sprintf("%-*s %s%s", nameWidth, nameCol, toolTag, modelShort), width-2)
 
 		if i == m.profileCursor && m.activePane == paneProfiles {
 			if m.editingContext {
