@@ -208,11 +208,20 @@ func cleanJSONC(data []byte) []byte {
 	return []byte(out.String())
 }
 
+const extendedContextThreshold = 200_000
+
 func applyContextTokens(profile *config.Profile) {
-	if v := profile.ResolveContextTokens(profile.Model); v > 0 {
+	v := profile.ResolveContextTokens(profile.Model)
+	if v > 0 {
 		os.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", fmt.Sprintf("%d", v))
 	} else {
 		os.Unsetenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+	}
+
+	if v > extendedContextThreshold &&
+		profile.EffectiveTool() == config.ToolClaude &&
+		!strings.HasSuffix(profile.Model, "[1m]") {
+		profile.Model += "[1m]"
 	}
 }
 

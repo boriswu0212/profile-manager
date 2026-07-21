@@ -55,8 +55,14 @@ type Profile struct {
 
 func (p *Profile) ResolveContextTokens(model string) int {
 	if p.ModelContext != nil {
-		if v, ok := p.ModelContext[model]; ok {
+		base := strings.TrimSuffix(model, "[1m]")
+		if v, ok := p.ModelContext[base]; ok {
 			return v
+		}
+		if base != model {
+			if v, ok := p.ModelContext[model]; ok {
+				return v
+			}
 		}
 	}
 	return p.MaxContextTokens

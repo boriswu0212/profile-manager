@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/b0riswu/profile-manager/internal/config"
 )
 
 func TestLoadAdditionalSettings_Empty(t *testing.T) {
@@ -127,6 +129,88 @@ func TestCleanJSONC(t *testing.T) {
 			got := string(cleanJSONC([]byte(tt.input)))
 			if got != tt.want {
 				t.Fatalf("cleanJSONC(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyContextTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		profile   config.Profile
+		wantModel string
+		wantEnv   string
+	}{
+		{
+			name: "appends [1m] when context > 200k",
+			profile: config.Profile{
+				Model:    "claude-opus-4-6",
+				Tool:     config.ToolClaude,
+				Provider: config.ProviderAnthropic,
+				ModelContext: map[string]int{
+					"claude-opus-4-6": 1_000_000,
+				},
+			},
+			wantModel: "claude-opus-4-6[1m]",
+			wantEnv:   "1000000",
+		},
+		{
+			name: "no suffix when context <= 200k",
+			profile: config.Profile{
+				Model:            "claude-sonnet-4-5",
+				Tool:             config.ToolClaude,
+				Provider:         config.ProviderAnthropic,
+				MaxContextTokens: 200_000,
+			},
+			wantModel: "claude-sonnet-4-5",
+			wantEnv:   "200000",
+		},
+		{
+			name: "no suffix for codex tool",
+			profile: config.Profile{
+				Model:            "claude-opus-4-6",
+				Tool:             config.ToolCodex,
+				Provider:         config.ProviderOpenAI,
+				MaxContextTokens: 1_000_000,
+			},
+			wantModel: "claude-opus-4-6",
+			wantEnv:   "1000000",
+		},
+		{
+			name: "no double suffix",
+			profile: config.Profile{
+				Model:            "claude-opus-4-6[1m]",
+				Tool:             config.ToolClaude,
+				Provider:         config.ProviderAnthropic,
+				MaxContextTokens: 1_000_000,
+			},
+			wantModel: "claude-opus-4-6[1m]",
+			wantEnv:   "1000000",
+		},
+		{
+			name: "no context configured",
+			profile: config.Profile{
+				Model:    "claude-sonnet-4-5",
+				Tool:     config.ToolClaude,
+				Provider: config.ProviderAnthropic,
+			},
+			wantModel: "claude-sonnet-4-5",
+			wantEnv:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Unsetenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+			p := tt.profile
+			applyContextTokens(&p)
+
+			if p.Model != tt.wantModel {
+				t.Errorf("model = %q, want %q", p.Model, tt.wantModel)
+			}
+			got := os.Getenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+			if got != tt.wantEnv {
+				t.Errorf("CLAUDE_CODE_MAX_CONTEXT_TOKENS = %q, want %q", got, tt.wantEnv)
 			}
 		})
 	}

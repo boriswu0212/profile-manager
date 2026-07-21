@@ -52,3 +52,21 @@ func TestLastModelPerDirectory(t *testing.T) {
 		t.Fatalf("oldest entries should be evicted, got %q", got)
 	}
 }
+
+func TestResolveContextTokens_StripsSuffix(t *testing.T) {
+	p := &Profile{
+		ModelContext: map[string]int{
+			"claude-opus-4-6": 1_000_000,
+		},
+	}
+
+	if v := p.ResolveContextTokens("claude-opus-4-6"); v != 1_000_000 {
+		t.Fatalf("base name lookup = %d, want 1000000", v)
+	}
+	if v := p.ResolveContextTokens("claude-opus-4-6[1m]"); v != 1_000_000 {
+		t.Fatalf("suffixed name lookup = %d, want 1000000", v)
+	}
+	if v := p.ResolveContextTokens("claude-sonnet-4-5"); v != 0 {
+		t.Fatalf("unknown model = %d, want 0", v)
+	}
+}
